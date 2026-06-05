@@ -1,0 +1,8 @@
+node_modules/
+dist/
+docs/
+.env
+.env.*
+.zmy-cli/
+*.log
+.DS_Store

@@ -1,0 +1,60 @@
+{
+  "name": "zmyun-cli",
+  "version": "0.1.5",
+  "description": "Agent-friendly CLI for ZMY collection and project workflows.",
+  "type": "module",
+  "homepage": "https://github.com/superjack2050/zmyun-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/superjack2050/zmyun-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/superjack2050/zmyun-cli/issues"
+  },
+  "bin": {
+    "zmy": "dist/cli.js"
+  },
+  "files": [
+    "dist/auth.js",
+    "dist/batch.js",
+    "dist/cli.js",
+    "dist/collection-actions.js",
+    "dist/collection-create.js",
+    "dist/collection-variants.js",
+    "dist/collections.js",
+    "dist/config.js",
+    "dist/constants.js",
+    "dist/credentials.js",
+    "dist/errors.js",
+    "dist/http.js",
+    "dist/ids.js",
+    "dist/json-store.js",
+    "dist/output.js",
+    "dist/projects.js",
+    "README.md",
+    "installation-guide.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "dev": "tsx src/cli.ts",
+    "test": "node --import tsx --test tests/*.test.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "open": "^10.1.0",
+    "undici": "^6.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
