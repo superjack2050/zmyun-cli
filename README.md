@@ -29,6 +29,9 @@ zmy doctor
 zmy collection list --only-mine --format table
 zmy collection list --workflow ai-editing --size 10
 zmy collection get <collection-id>
+zmy collection variants sku patch <collection-id> --sku-id <sku-id> --master-image ./main.jpg
+zmy collection variants sku affiliate-image replace <collection-id> --sku-id <sku-id> --old-url <old-url> --new-url <new-url> --dry-run
+zmy collection variants sku affiliate-image replace <collection-id> --sku-id <sku-id> --old-url <old-url> --new-file ./fixed.jpg
 zmy collection workflow list --format table
 zmy collection ai-status list --format table
 zmy collection origin list --format table

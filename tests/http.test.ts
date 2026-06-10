@@ -246,6 +246,53 @@ test("PUT requests send JSON accept, request id, bearer token, and body", async 
   assert.equal(String(calls[0].body), JSON.stringify({ ok: true }));
 });
 
+test("POST requests can send form data without JSON content type", async () => {
+  const env = await tempEnv("form-data-request");
+  await saveCredential(
+    "local",
+    {
+      access_token: "zmy_at_upload",
+      refresh_token: "zmy_rt_upload",
+      token_type: "Bearer",
+      scope: "ops:read collection:read project:read collection:write",
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    env,
+  );
+
+  const calls: CapturedRequest[] = [];
+  const formData = new FormData();
+  formData.append("file", new Blob(["image"], { type: "image/jpeg" }), "main.jpg");
+  const client = new ApiClient({
+    endpoint: "http://127.0.0.1:8120",
+    profileName: "local",
+    env,
+    fetch: async (input, init) => {
+      calls.push(capture(input, init));
+      return jsonResponse(200, {
+        code: 200,
+        message: "success",
+        metadata: { ok: true },
+      });
+    },
+    requestId: () => "rid-upload",
+  });
+
+  const result = await client.request("POST", "/api/v1/upload", {
+    formData,
+    requireAuth: true,
+  });
+
+  assert.deepEqual(result, { ok: true });
+  assert.equal(calls[0].headers.Accept, "application/json");
+  assert.equal(calls[0].headers.RequestId, "rid-upload");
+  assert.equal(calls[0].headers.Authorization, "Bearer zmy_at_upload");
+  assert.equal(calls[0].headers["Content-Type"], undefined);
+  assert.equal(calls[0].method, "POST");
+  assert.equal(calls[0].body, formData);
+});
+
 test("403 errors hint at reauthorization for write scope", () => {
   assert.throws(
     () =>

@@ -16,6 +16,7 @@ export interface Envelope<T = unknown> {
 export interface RequestOptions {
   params?: Record<string, unknown>;
   data?: unknown;
+  formData?: FormData;
   auth?: boolean;
   requireAuth?: boolean;
   retryOnUnauthorized?: boolean;
@@ -172,6 +173,13 @@ export class ApiClient {
       RequestId: this.requestId(),
     };
 
+    if (options.data !== undefined && options.formData !== undefined) {
+      throw new CliError(
+        "invalid_argument",
+        "Request cannot include both JSON data and form data.",
+      );
+    }
+
     if (options.data !== undefined) {
       headers["Content-Type"] = "application/json";
     }
@@ -188,7 +196,7 @@ export class ApiClient {
     const response = await this.fetchImpl(url, {
       method,
       headers,
-      body: options.data === undefined ? undefined : JSON.stringify(options.data),
+      body: this.buildRequestBody(options),
     });
     const bodyText = await response.text();
     return {
@@ -206,6 +214,16 @@ export class ApiClient {
       url.searchParams.set(key, String(value));
     }
     return url.toString();
+  }
+
+  private buildRequestBody(options: RequestOptions): BodyInit | undefined {
+    if (options.formData !== undefined) {
+      return options.formData;
+    }
+    if (options.data !== undefined) {
+      return JSON.stringify(options.data);
+    }
+    return undefined;
   }
 }
 

@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   buildSkuPatchItemFromOptions,
   normalizeAttributeOperation,
+  normalizeAffiliateImageReplaceOptions,
+  normalizeAffiliateImageReplaceMetadata,
   normalizeVariantsMetadata,
   normalizeVariantsPreviewMetadata,
   normalizeVariantsWriteMetadata,
@@ -85,6 +87,7 @@ test("variants preview and write metadata normalize counts and warnings", () => 
       collection_id: 46398,
       updated_sku_ids: [123, "124"],
       updated_sku_count: 2,
+      master_image: "https://cdn.example.test/main.jpg",
       updated_at: "2026-06-04 10:01:00",
     }),
     {
@@ -92,6 +95,7 @@ test("variants preview and write metadata normalize counts and warnings", () => 
       collection_id: "46398",
       updated_fields: [],
       updated_sku_ids: ["123", "124"],
+      master_image: "https://cdn.example.test/main.jpg",
       created_sku_count: 0,
       updated_sku_count: 2,
       deleted_sku_count: 0,
@@ -198,6 +202,112 @@ test("attribute operation normalization validates required options", () => {
   assert.throws(
     () => normalizeAttributeOperation("remove-value", { key: "Color" }),
     /--from is required/,
+  );
+});
+
+test("affiliate image replace options select url or file mode", () => {
+  assert.deepEqual(
+    normalizeAffiliateImageReplaceOptions({
+      oldUrl: "https://cdn.example.test/old.jpg",
+      newUrl: "https://cdn.example.test/new.jpg",
+      ifMatchUpdatedAt: "2026-06-10 12:00:00",
+      dryRun: true,
+    }),
+    {
+      mode: "url",
+      oldUrl: "https://cdn.example.test/old.jpg",
+      newUrl: "https://cdn.example.test/new.jpg",
+      ifMatchUpdatedAt: "2026-06-10 12:00:00",
+      dryRun: true,
+    },
+  );
+
+  assert.deepEqual(
+    normalizeAffiliateImageReplaceOptions({
+      oldUrl: "https://cdn.example.test/old.jpg",
+      newFile: " ./fixed.webp ",
+    }),
+    {
+      mode: "file",
+      oldUrl: "https://cdn.example.test/old.jpg",
+      newFile: "./fixed.webp",
+      ifMatchUpdatedAt: undefined,
+      dryRun: false,
+    },
+  );
+
+  assert.deepEqual(
+    normalizeAffiliateImageReplaceOptions({
+      oldUrl: "https://cdn.example.test/old.jpg",
+      assetId: " minio://bucket/image/fixed.jpg ",
+    }),
+    {
+      mode: "asset",
+      oldUrl: "https://cdn.example.test/old.jpg",
+      assetId: "minio://bucket/image/fixed.jpg",
+      ifMatchUpdatedAt: undefined,
+      dryRun: false,
+    },
+  );
+});
+
+test("affiliate image replace options reject ambiguous replacement sources", () => {
+  assert.throws(
+    () =>
+      normalizeAffiliateImageReplaceOptions({
+        oldUrl: "https://cdn.example.test/old.jpg",
+        newUrl: "https://cdn.example.test/new.jpg",
+        newFile: "./fixed.jpg",
+      }),
+    /cannot be combined/,
+  );
+  assert.throws(
+    () =>
+      normalizeAffiliateImageReplaceOptions({
+        oldUrl: "https://cdn.example.test/old.jpg",
+        newUrl: "https://cdn.example.test/new.jpg",
+        assetId: "minio://bucket/image/fixed.jpg",
+      }),
+    /cannot be combined/,
+  );
+  assert.throws(
+    () =>
+      normalizeAffiliateImageReplaceOptions({
+        oldUrl: "https://cdn.example.test/old.jpg",
+      }),
+    /Replacement image is required/,
+  );
+  assert.throws(
+    () =>
+      normalizeAffiliateImageReplaceOptions({
+        oldUrl: "file:///old.jpg",
+        newUrl: "https://cdn.example.test/new.jpg",
+      }),
+    /must use http or https/,
+  );
+});
+
+test("affiliate image replace metadata normalizes ids and image arrays", () => {
+  assert.deepEqual(
+    normalizeAffiliateImageReplaceMetadata({
+      collection_id: 46398,
+      sku_id: 123,
+      old_url: "https://cdn.example.test/old.jpg",
+      new_url: "https://cdn.example.test/new.jpg",
+      asset_id: "minio://bucket/image/fixed.jpg",
+      affiliate_images: ["https://cdn.example.test/new.jpg", 123],
+      updated_at: "2026-06-10 12:01:00",
+    }),
+    {
+      ok: true,
+      collection_id: "46398",
+      sku_id: "123",
+      old_url: "https://cdn.example.test/old.jpg",
+      new_url: "https://cdn.example.test/new.jpg",
+      asset_id: "minio://bucket/image/fixed.jpg",
+      affiliate_images: ["https://cdn.example.test/new.jpg", "123"],
+      updated_at: "2026-06-10 12:01:00",
+    },
   );
 });
 

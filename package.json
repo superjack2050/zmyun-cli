@@ -27,6 +27,7 @@
     "dist/credentials.js",
     "dist/errors.js",
     "dist/http.js",
+    "dist/images.js",
     "dist/ids.js",
     "dist/json-store.js",
     "dist/output.js",

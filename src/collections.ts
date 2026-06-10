@@ -8,6 +8,7 @@ import {
 import {
   assertValidSkuPatchBatchPayload,
   assertValidVariantsSetPayload,
+  normalizeAffiliateImageReplaceMetadata,
   normalizeVariantsMetadata,
   normalizeVariantsPreviewMetadata,
   normalizeVariantsWriteMetadata,
@@ -19,6 +20,7 @@ import type {
   CollectionCreateResult,
 } from "./collection-create.js";
 import type {
+  AffiliateImageReplaceResult,
   AttributeOperationPayload,
   CollectionVariantsMetadata,
   SkuPatchBatchPayload,
@@ -177,6 +179,148 @@ export async function patchCollectionVariantSkus(
     requireAuth: true,
   });
   return normalizeVariantsWriteMetadata(metadata);
+}
+
+export interface PatchCollectionVariantSkuMasterImageOptions {
+  file: Blob;
+  filename: string;
+  ifMatchUpdatedAt?: string;
+}
+
+export interface ReplaceCollectionVariantSkuAffiliateImageJsonOptions {
+  oldUrl: string;
+  newUrl?: string;
+  assetId?: string;
+  ifMatchUpdatedAt: string;
+}
+
+export interface ReplaceCollectionVariantSkuAffiliateImageFileOptions {
+  oldUrl: string;
+  file: Blob;
+  filename: string;
+  ifMatchUpdatedAt: string;
+}
+
+export function buildPatchCollectionVariantSkuMasterImageRequest(
+  collectionId: string,
+  skuId: string,
+  options: PatchCollectionVariantSkuMasterImageOptions,
+): { path: string; formData: FormData } {
+  const formData = new FormData();
+  formData.append("file", options.file, options.filename);
+  if (options.ifMatchUpdatedAt) {
+    formData.append("if_match_updated_at", options.ifMatchUpdatedAt);
+  }
+  return {
+    path: `/api/v1/develop/collection/${encodeURIComponent(collectionId)}/variants/skus/${encodeURIComponent(skuId)}/master-image`,
+    formData,
+  };
+}
+
+export async function patchCollectionVariantSkuMasterImage(
+  client: ApiClient,
+  collectionId: string,
+  skuId: string,
+  options: PatchCollectionVariantSkuMasterImageOptions,
+): Promise<VariantsWriteResult> {
+  const request = buildPatchCollectionVariantSkuMasterImageRequest(
+    collectionId,
+    skuId,
+    options,
+  );
+  const metadata = await client.request("POST", request.path, {
+    formData: request.formData,
+    requireAuth: true,
+  });
+  return normalizeVariantsWriteMetadata(metadata);
+}
+
+export function buildReplaceCollectionVariantSkuAffiliateImageJsonRequest(
+  collectionId: string,
+  skuId: string,
+  options: ReplaceCollectionVariantSkuAffiliateImageJsonOptions,
+): { path: string; data: Record<string, unknown> } {
+  validateHttpUrl(options.oldUrl, "old-url");
+  const newUrl = options.newUrl?.trim();
+  const assetId = options.assetId?.trim();
+  if (newUrl && assetId) {
+    throw new CliError("invalid_argument", "new-url and asset-id cannot be combined");
+  }
+  if (!newUrl && !assetId) {
+    throw new CliError("invalid_argument", "new-url or asset-id is required");
+  }
+  if (newUrl) {
+    validateHttpUrl(newUrl, "new-url");
+  }
+  const ifMatchUpdatedAt = options.ifMatchUpdatedAt.trim();
+  if (!ifMatchUpdatedAt) {
+    throw new CliError("invalid_argument", "if-match-updated-at is required");
+  }
+  return {
+    path: affiliateImageReplacePath(collectionId, skuId),
+    data: omitEmpty({
+      old_url: options.oldUrl.trim(),
+      new_url: newUrl,
+      asset_id: assetId,
+      if_match_updated_at: ifMatchUpdatedAt,
+    }),
+  };
+}
+
+export function buildReplaceCollectionVariantSkuAffiliateImageFileRequest(
+  collectionId: string,
+  skuId: string,
+  options: ReplaceCollectionVariantSkuAffiliateImageFileOptions,
+): { path: string; formData: FormData } {
+  validateHttpUrl(options.oldUrl, "old-url");
+  const ifMatchUpdatedAt = options.ifMatchUpdatedAt.trim();
+  if (!ifMatchUpdatedAt) {
+    throw new CliError("invalid_argument", "if-match-updated-at is required");
+  }
+  const formData = new FormData();
+  formData.append("old_url", options.oldUrl.trim());
+  formData.append("if_match_updated_at", ifMatchUpdatedAt);
+  formData.append("new_file", options.file, options.filename);
+  return {
+    path: affiliateImageReplacePath(collectionId, skuId),
+    formData,
+  };
+}
+
+export async function replaceCollectionVariantSkuAffiliateImageJson(
+  client: ApiClient,
+  collectionId: string,
+  skuId: string,
+  options: ReplaceCollectionVariantSkuAffiliateImageJsonOptions,
+): Promise<AffiliateImageReplaceResult> {
+  const request = buildReplaceCollectionVariantSkuAffiliateImageJsonRequest(
+    collectionId,
+    skuId,
+    options,
+  );
+  const metadata = await client.request("PATCH", request.path, {
+    data: request.data,
+    requireAuth: true,
+  });
+  return normalizeAffiliateImageReplaceMetadata(metadata);
+}
+
+export async function replaceCollectionVariantSkuAffiliateImageFile(
+  client: ApiClient,
+  collectionId: string,
+  skuId: string,
+  options: ReplaceCollectionVariantSkuAffiliateImageFileOptions,
+): Promise<AffiliateImageReplaceResult> {
+  const request = buildReplaceCollectionVariantSkuAffiliateImageFileRequest(
+    collectionId,
+    skuId,
+    options,
+  );
+  const metadata = await client.request("PATCH", request.path, {
+    formData: request.formData,
+    requireAuth: true,
+  });
+  return normalizeAffiliateImageReplaceMetadata(metadata);
 }
 
 export function buildPreviewCollectionVariantAttributeOperationRequest(
@@ -1090,6 +1234,10 @@ function formatChoiceValue(
 
 function normalizeKey(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function affiliateImageReplacePath(collectionId: string, skuId: string): string {
+  return `/api/v1/develop/collection/${encodeURIComponent(collectionId)}/variants/skus/${encodeURIComponent(skuId)}/affiliate-images/replace`;
 }
 
 function omitEmpty(value: Record<string, unknown>): Record<string, unknown> {

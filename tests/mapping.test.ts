@@ -8,9 +8,12 @@ import {
   buildCommitCollectionVariantAttributeOperationRequest,
   buildGetCollectionVariantsRequest,
   buildPatchCollectionVariantSkuRequest,
+  buildPatchCollectionVariantSkuMasterImageRequest,
   buildPatchCollectionVariantSkusRequest,
   buildPreviewCollectionVariantAttributeOperationRequest,
   buildPreviewCollectionVariantsRequest,
+  buildReplaceCollectionVariantSkuAffiliateImageFileRequest,
+  buildReplaceCollectionVariantSkuAffiliateImageJsonRequest,
   buildReplaceCollectionVariantsRequest,
   buildSetCollectionProjectRequest,
   buildSubmitCollectionAiEditingRequest,
@@ -280,6 +283,82 @@ test("collection variant SKU patch endpoints preserve update masks", () => {
     path: "/api/v1/develop/collection/46398/variants/skus",
     data: batchPayload,
   });
+});
+
+test("collection variant SKU master image upload uses multipart endpoint", () => {
+  const request = buildPatchCollectionVariantSkuMasterImageRequest("46398", "123", {
+    file: new Blob(["image"], { type: "image/jpeg" }),
+    filename: "main.jpg",
+    ifMatchUpdatedAt: "2026-06-04 10:00:00",
+  });
+
+  assert.equal(
+    request.path,
+    "/api/v1/develop/collection/46398/variants/skus/123/master-image",
+  );
+  assert.equal(request.formData.get("if_match_updated_at"), "2026-06-04 10:00:00");
+  assert.equal((request.formData.get("file") as File).name, "main.jpg");
+});
+
+test("collection variant SKU affiliate image replacement maps JSON and multipart modes", () => {
+  const jsonRequest = buildReplaceCollectionVariantSkuAffiliateImageJsonRequest(
+    "46398",
+    "123",
+    {
+      oldUrl: "https://cdn.example.test/old.jpg",
+      newUrl: "https://cdn.example.test/new.jpg",
+      ifMatchUpdatedAt: "2026-06-10 12:00:00",
+    },
+  );
+
+  assert.deepEqual(jsonRequest, {
+    path: "/api/v1/develop/collection/46398/variants/skus/123/affiliate-images/replace",
+    data: {
+      old_url: "https://cdn.example.test/old.jpg",
+      new_url: "https://cdn.example.test/new.jpg",
+      if_match_updated_at: "2026-06-10 12:00:00",
+    },
+  });
+
+  const assetRequest = buildReplaceCollectionVariantSkuAffiliateImageJsonRequest(
+    "46398",
+    "123",
+    {
+      oldUrl: "https://cdn.example.test/old.jpg",
+      assetId: "minio://bucket/image/fixed.jpg",
+      ifMatchUpdatedAt: "2026-06-10 12:00:00",
+    },
+  );
+
+  assert.deepEqual(assetRequest, {
+    path: "/api/v1/develop/collection/46398/variants/skus/123/affiliate-images/replace",
+    data: {
+      old_url: "https://cdn.example.test/old.jpg",
+      asset_id: "minio://bucket/image/fixed.jpg",
+      if_match_updated_at: "2026-06-10 12:00:00",
+    },
+  });
+
+  const fileRequest = buildReplaceCollectionVariantSkuAffiliateImageFileRequest(
+    "46398",
+    "123",
+    {
+      oldUrl: "https://cdn.example.test/old.jpg",
+      file: new Blob(["image"], { type: "image/webp" }),
+      filename: "fixed.webp",
+      ifMatchUpdatedAt: "2026-06-10 12:00:00",
+    },
+  );
+
+  assert.equal(
+    fileRequest.path,
+    "/api/v1/develop/collection/46398/variants/skus/123/affiliate-images/replace",
+  );
+  assert.equal(fileRequest.formData.get("old_url"), "https://cdn.example.test/old.jpg");
+  assert.equal(fileRequest.formData.get("if_match_updated_at"), "2026-06-10 12:00:00");
+  assert.equal(fileRequest.formData.get("dry_run"), null);
+  assert.equal(fileRequest.formData.get("file"), null);
+  assert.equal((fileRequest.formData.get("new_file") as File).name, "fixed.webp");
 });
 
 test("collection variant attribute operation preview and commit use separate paths", () => {

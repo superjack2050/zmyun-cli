@@ -109,10 +109,61 @@ export interface VariantsWriteResult {
   collection_id: string;
   updated_fields: string[];
   updated_sku_ids: string[];
+  master_image?: string;
   created_sku_count: number;
   updated_sku_count: number;
   deleted_sku_count: number;
   affected_sku_count: number;
+  updated_at: string;
+}
+
+export type AffiliateImageReplaceMode = "url" | "file" | "asset";
+
+export interface AffiliateImageReplaceOptions {
+  oldUrl?: string;
+  newUrl?: string;
+  newFile?: string;
+  assetId?: string;
+  ifMatchUpdatedAt?: string;
+  dryRun?: boolean;
+}
+
+export interface AffiliateImageReplacePlan {
+  mode: AffiliateImageReplaceMode;
+  oldUrl: string;
+  newUrl?: string;
+  newFile?: string;
+  assetId?: string;
+  ifMatchUpdatedAt?: string;
+  dryRun: boolean;
+}
+
+export interface AffiliateImageReplaceDryRunResult {
+  dry_run: true;
+  backend_connected: false;
+  collection_id: string;
+  sku_id: string;
+  field: "affiliate_images";
+  mode: AffiliateImageReplaceMode;
+  method: "PATCH";
+  path: string;
+  content_type: "application/json" | "multipart/form-data";
+  old_url: string;
+  new_url?: string;
+  new_file?: string;
+  asset_id?: string;
+  filename?: string;
+  if_match_updated_at?: string;
+}
+
+export interface AffiliateImageReplaceResult {
+  ok: true;
+  collection_id: string;
+  sku_id: string;
+  old_url: string;
+  new_url?: string;
+  asset_id?: string;
+  affiliate_images: string[];
   updated_at: string;
 }
 
@@ -316,7 +367,7 @@ export function normalizeVariantsWriteMetadata(
       { details: metadata },
     );
   }
-  return {
+  const result: VariantsWriteResult = {
     ok: true,
     collection_id: collectionId,
     updated_fields: normalizeStringArray(record.updated_fields),
@@ -327,6 +378,43 @@ export function normalizeVariantsWriteMetadata(
     affected_sku_count: toCount(record.affected_sku_count),
     updated_at: stringify(record.updated_at),
   };
+  const masterImage = stringify(record.master_image);
+  if (masterImage) {
+    result.master_image = masterImage;
+  }
+  return result;
+}
+
+export function normalizeAffiliateImageReplaceMetadata(
+  metadata: unknown,
+): AffiliateImageReplaceResult {
+  const record = asRecord(metadata);
+  const collectionId = normalizeVariantId(record.collection_id);
+  const skuId = normalizeVariantId(record.sku_id);
+  if (!collectionId || !skuId) {
+    throw new CliError(
+      "invalid_response",
+      "affiliate image replace response metadata is missing collection_id or sku_id",
+      { details: metadata },
+    );
+  }
+  const result: AffiliateImageReplaceResult = {
+    ok: true,
+    collection_id: collectionId,
+    sku_id: skuId,
+    old_url: stringify(record.old_url),
+    affiliate_images: normalizeStringArray(record.affiliate_images),
+    updated_at: stringify(record.updated_at),
+  };
+  const newUrl = stringify(record.new_url);
+  if (newUrl) {
+    result.new_url = newUrl;
+  }
+  const assetId = stringify(record.asset_id);
+  if (assetId) {
+    result.asset_id = assetId;
+  }
+  return result;
 }
 
 export function parseCollectionVariantsBackendErrors(
@@ -368,6 +456,18 @@ export function isNotFoundError(error: unknown): boolean {
   return backendReason(error) === "NOT_FOUND";
 }
 
+export function isImageNotFoundError(error: unknown): boolean {
+  return backendReason(error) === "IMAGE_NOT_FOUND";
+}
+
+export function isAmbiguousImageMatchError(error: unknown): boolean {
+  return backendReason(error) === "AMBIGUOUS_IMAGE_MATCH";
+}
+
+export function isDuplicateImageError(error: unknown): boolean {
+  return backendReason(error) === "DUPLICATE_IMAGE";
+}
+
 export function staleWriteError(): CliError {
   return new CliError(
     "STALE_WRITE",
@@ -378,6 +478,29 @@ export function staleWriteError(): CliError {
 
 export function notFoundError(resource: "collection" | "sku" | "collection or sku"): CliError {
   return new CliError("NOT_FOUND", `${resource} not found.`);
+}
+
+export function affiliateImageNotFoundError(): CliError {
+  return new CliError(
+    "IMAGE_NOT_FOUND",
+    "Old affiliate image was not found on this SKU.",
+    { hint: "Check --old-url against the current SKU affiliate_images." },
+  );
+}
+
+export function ambiguousImageMatchError(): CliError {
+  return new CliError(
+    "AMBIGUOUS_IMAGE_MATCH",
+    "Old affiliate image matched more than one SKU image after backend normalization.",
+    { hint: "Open the SKU images and choose the exact image to replace manually." },
+  );
+}
+
+export function duplicateImageError(): CliError {
+  return new CliError(
+    "DUPLICATE_IMAGE",
+    "Replacement image already exists in this SKU's affiliate images.",
+  );
 }
 
 export function resolveRepriceDefault(
@@ -437,6 +560,56 @@ export function normalizeAttributeOperation(
   }
 
   return payload;
+}
+
+export function normalizeAffiliateImageReplaceOptions(
+  options: AffiliateImageReplaceOptions,
+): AffiliateImageReplacePlan {
+  const oldUrl = requiredHttpUrl(options.oldUrl, "--old-url");
+  const newUrl = optionalText(options.newUrl);
+  const newFile = optionalText(options.newFile);
+  const assetId = optionalText(options.assetId);
+  const sourceCount = [newUrl, newFile, assetId].filter(Boolean).length;
+
+  if (sourceCount > 1) {
+    throw new CliError(
+      "invalid_argument",
+      "--new-url, --new-file, and --asset-id cannot be combined",
+    );
+  }
+  if (sourceCount === 0) {
+    throw new CliError("invalid_argument", "Replacement image is required.", {
+      hint: "Use one of: --new-url <url>, --new-file <path>, or --asset-id <asset-id>.",
+    });
+  }
+
+  if (newUrl) {
+    return {
+      mode: "url",
+      oldUrl,
+      newUrl: requiredHttpUrl(newUrl, "--new-url"),
+      ifMatchUpdatedAt: optionalText(options.ifMatchUpdatedAt),
+      dryRun: options.dryRun ?? false,
+    };
+  }
+
+  if (assetId) {
+    return {
+      mode: "asset",
+      oldUrl,
+      assetId,
+      ifMatchUpdatedAt: optionalText(options.ifMatchUpdatedAt),
+      dryRun: options.dryRun ?? false,
+    };
+  }
+
+  return {
+    mode: "file",
+    oldUrl,
+    newFile,
+    ifMatchUpdatedAt: optionalText(options.ifMatchUpdatedAt),
+    dryRun: options.dryRun ?? false,
+  };
 }
 
 export function shouldConfirmVariantsMutation(options: {
@@ -658,6 +831,25 @@ function requiredText(value: string | undefined, option: string): string {
   const text = value?.trim() ?? "";
   if (!text) {
     throw new CliError("invalid_argument", `${option} is required`);
+  }
+  return text;
+}
+
+function optionalText(value: string | undefined): string | undefined {
+  const text = value?.trim() ?? "";
+  return text || undefined;
+}
+
+function requiredHttpUrl(value: string | undefined, option: string): string {
+  const text = requiredText(value, option);
+  let parsed: URL;
+  try {
+    parsed = new URL(text);
+  } catch {
+    throw new CliError("invalid_argument", `${option} must be a valid URL`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new CliError("invalid_argument", `${option} must use http or https`);
   }
   return text;
 }

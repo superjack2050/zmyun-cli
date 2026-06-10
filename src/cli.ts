@@ -16,9 +16,16 @@ import {
 } from "./collection-create.js";
 import {
   buildSkuPatchItemFromOptions,
+  affiliateImageNotFoundError,
+  ambiguousImageMatchError,
+  duplicateImageError,
+  isAmbiguousImageMatchError,
+  isDuplicateImageError,
+  isImageNotFoundError,
   isNotFoundError,
   isStaleWriteError,
   normalizeAttributeOperation,
+  normalizeAffiliateImageReplaceOptions,
   normalizeSkuPatchBatchPayload,
   normalizeVariantsSetPayload,
   notFoundError,
@@ -37,6 +44,9 @@ import {
 import type {
   AttributeOperationPayload,
   AttributeOperationType,
+  AffiliateImageReplaceDryRunResult,
+  AffiliateImageReplacePlan,
+  AffiliateImageReplaceResult,
   SkuPatchBatchPayload,
   SkuPatchItem,
   VariantsPreviewResult,
@@ -52,10 +62,17 @@ import { getCredential } from "./credentials.js";
 import { errorToPayload } from "./errors.js";
 import { CliError } from "./errors.js";
 import { ApiClient } from "./http.js";
+import {
+  isHttpUrl,
+  MASTER_IMAGE_UPLOAD_CONTENT_TYPES,
+  readLocalImageFile,
+} from "./images.js";
 import { resolveIds, toPositiveIntegerId } from "./ids.js";
 import { loginWithDeviceFlow, logout, whoami } from "./auth.js";
 import {
   AI_EDITING_STATUS_OPTIONS,
+  buildReplaceCollectionVariantSkuAffiliateImageFileRequest,
+  buildReplaceCollectionVariantSkuAffiliateImageJsonRequest,
   collectionTableRows,
   commitCollectionVariantAttributeOperation,
   choiceTableRows,
@@ -65,11 +82,14 @@ import {
   listCollections,
   ORIGIN_TYPE_OPTIONS,
   patchCollectionVariantSku,
+  patchCollectionVariantSkuMasterImage,
   patchCollectionVariantSkus,
   patchCollectionContent,
   previewCollectionVariantAttributeOperation,
   previewCollectionVariants,
   previewCollectionCreate,
+  replaceCollectionVariantSkuAffiliateImageFile,
+  replaceCollectionVariantSkuAffiliateImageJson,
   replaceCollectionVariants,
   SORT_FIELD_OPTIONS,
   SORT_ORDER_OPTIONS,
@@ -474,6 +494,24 @@ export function buildProgram(): Command {
         const context = await createContext();
         const current = await getCollectionVariants(context.client, collectionId);
         item.if_match_updated_at = current.updated_at;
+        if (shouldUploadMasterImage(item)) {
+          const localImage = await readLocalImageFile(String(item.master_image).trim(), {
+            allowedContentTypes: MASTER_IMAGE_UPLOAD_CONTENT_TYPES,
+            typeHint: "Use a jpg, jpeg, or png file.",
+          });
+          const result = await patchCollectionVariantSkuMasterImage(
+            context.client,
+            collectionId,
+            options.skuId ?? "",
+            {
+              file: localImage.blob,
+              filename: localImage.filename,
+              ifMatchUpdatedAt: current.updated_at,
+            },
+          );
+          printByFormat(result, format, variantsWriteTableRows(result));
+          return;
+        }
         const result = await patchCollectionVariantSku(
           context.client,
           collectionId,
@@ -488,6 +526,94 @@ export function buildProgram(): Command {
         throw normalizeVariantsCommandError(error, options.skuId ? "sku" : "collection or sku");
       }
     });
+
+  const collectionVariantSkuAffiliateImage = collectionVariantSku
+    .command("affiliate-image")
+    .description("Collection variant SKU affiliate image helpers.");
+
+  collectionVariantSkuAffiliateImage
+    .command("replace")
+    .argument("<collection-id>")
+    .requiredOption("--sku-id <sku-id>", "SKU id containing the affiliate image.")
+    .requiredOption("--old-url <url>", "Existing affiliate image URL to replace.")
+    .option("--new-url <url>", "Replacement affiliate image URL. Uses JSON mode.")
+    .option("--new-file <path>", "Replacement local image file. Uses multipart mode.")
+    .option("--asset-id <asset-id>", "Uploaded asset id. Uses JSON mode.")
+    .option("--if-match-updated-at <time>", "Advanced optimistic concurrency override.")
+    .option("--dry-run", "Validate CLI inputs and show the planned backend request.")
+    .option("--format <format>", "json or table", "json")
+    .description("Replace one SKU affiliate image.")
+    .action(
+      async (
+        collectionId: string,
+        options: CollectionVariantsSkuAffiliateImageReplaceCommandOptions,
+      ) => {
+        const format = assertFormat(options.format);
+        const plan = normalizeAffiliateImageReplaceOptions({
+          oldUrl: options.oldUrl,
+          newUrl: options.newUrl,
+          newFile: options.newFile,
+          assetId: options.assetId,
+          ifMatchUpdatedAt: options.ifMatchUpdatedAt,
+          dryRun: options.dryRun,
+        });
+        const localImage =
+          plan.mode === "file" ? await readLocalImageFile(plan.newFile ?? "") : undefined;
+
+        if (plan.dryRun) {
+          const result = affiliateImageReplaceDryRunResult(
+            collectionId,
+            options.skuId,
+            plan,
+            localImage?.filename,
+            localImage?.blob,
+          );
+          printByFormat(result, format, affiliateImageReplaceDryRunTableRows(result));
+          return;
+        }
+
+        try {
+          const context = await createContext();
+          const current = await getCollectionVariants(context.client, collectionId);
+          const ifMatchUpdatedAt = plan.ifMatchUpdatedAt ?? current.updated_at;
+          let result: AffiliateImageReplaceResult;
+          if (plan.mode === "file") {
+            if (!localImage) {
+              throw new CliError("invalid_argument", "--new-file is required");
+            }
+            result = await replaceCollectionVariantSkuAffiliateImageFile(
+              context.client,
+              collectionId,
+              options.skuId,
+              {
+                oldUrl: plan.oldUrl,
+                file: localImage.blob,
+                filename: localImage.filename,
+                ifMatchUpdatedAt,
+              },
+            );
+          } else {
+            result = await replaceCollectionVariantSkuAffiliateImageJson(
+              context.client,
+              collectionId,
+              options.skuId,
+              {
+                oldUrl: plan.oldUrl,
+                newUrl: plan.newUrl,
+                assetId: plan.assetId,
+                ifMatchUpdatedAt,
+              },
+            );
+          }
+          printByFormat(result, format, affiliateImageReplaceTableRows(result));
+        } catch (error) {
+          if (handleVariantsFieldErrors(error, format)) {
+            return;
+          }
+          throw normalizeAffiliateImageReplaceCommandError(error);
+        }
+      },
+    );
 
   const collectionVariantAttr = collectionVariants
     .command("attr")
@@ -964,6 +1090,17 @@ export interface CollectionVariantsSkuPatchCommandOptions {
   format: string;
 }
 
+export interface CollectionVariantsSkuAffiliateImageReplaceCommandOptions {
+  skuId: string;
+  oldUrl: string;
+  newUrl?: string;
+  newFile?: string;
+  assetId?: string;
+  ifMatchUpdatedAt?: string;
+  dryRun?: boolean;
+  format: string;
+}
+
 export interface CollectionVariantsAttrCommandOptions {
   key?: string;
   from?: string;
@@ -1296,6 +1433,131 @@ async function readSkuPatchBatchPayload(
   return payload;
 }
 
+function shouldUploadMasterImage(item: SkuPatchItem): boolean {
+  const masterImage =
+    typeof item.master_image === "string" ? item.master_image.trim() : "";
+  if (!masterImage || isHttpUrl(masterImage)) {
+    return false;
+  }
+  if (
+    item.update_mask.length !== 1 ||
+    item.update_mask[0] !== "master_image"
+  ) {
+    throw new CliError(
+      "invalid_argument",
+      "Local --master-image file upload cannot be combined with other SKU patch fields.",
+      {
+        hint: "Run the local image upload separately, or use an http(s) URL when combining fields.",
+      },
+    );
+  }
+  return true;
+}
+
+function affiliateImageReplaceDryRunResult(
+  collectionId: string,
+  skuId: string,
+  plan: AffiliateImageReplacePlan,
+  filename?: string,
+  file?: Blob,
+): AffiliateImageReplaceDryRunResult {
+  const ifMatchUpdatedAt =
+    plan.ifMatchUpdatedAt ?? "<fetched-from-collection-updated-at>";
+  if (plan.mode === "url" || plan.mode === "asset") {
+    const request = buildReplaceCollectionVariantSkuAffiliateImageJsonRequest(
+      collectionId,
+      skuId,
+      {
+        oldUrl: plan.oldUrl,
+        newUrl: plan.newUrl,
+        assetId: plan.assetId,
+        ifMatchUpdatedAt,
+      },
+    );
+    return {
+      dry_run: true,
+      backend_connected: false,
+      collection_id: collectionId,
+      sku_id: skuId,
+      field: "affiliate_images",
+      mode: plan.mode,
+      method: "PATCH",
+      path: request.path,
+      content_type: "application/json",
+      old_url: String(request.data.old_url),
+      new_url:
+        request.data.new_url === undefined ? undefined : String(request.data.new_url),
+      asset_id:
+        request.data.asset_id === undefined ? undefined : String(request.data.asset_id),
+      if_match_updated_at: String(request.data.if_match_updated_at),
+    };
+  }
+
+  if (!file || !filename || !plan.newFile) {
+    throw new CliError("invalid_argument", "new-file is required for multipart mode");
+  }
+  const request = buildReplaceCollectionVariantSkuAffiliateImageFileRequest(
+    collectionId,
+    skuId,
+    {
+      oldUrl: plan.oldUrl,
+      file,
+      filename,
+      ifMatchUpdatedAt,
+    },
+  );
+  return {
+    dry_run: true,
+    backend_connected: false,
+    collection_id: collectionId,
+    sku_id: skuId,
+    field: "affiliate_images",
+    mode: "file",
+    method: "PATCH",
+    path: request.path,
+    content_type: "multipart/form-data",
+    old_url: String(request.formData.get("old_url")),
+    new_file: plan.newFile,
+    filename,
+    if_match_updated_at: String(request.formData.get("if_match_updated_at")),
+  };
+}
+
+function affiliateImageReplaceDryRunTableRows(
+  result: AffiliateImageReplaceDryRunResult,
+): Array<Record<string, unknown>> {
+  return [
+    {
+      Collection: result.collection_id,
+      SKU: result.sku_id,
+      Field: result.field,
+      Mode: result.mode,
+      Method: result.method,
+      Path: result.path,
+      OldURL: result.old_url,
+      New: result.new_url ?? result.new_file ?? result.asset_id ?? "",
+      IfMatch: result.if_match_updated_at ?? "",
+      Backend: result.backend_connected ? "connected" : "pending",
+    },
+  ];
+}
+
+function affiliateImageReplaceTableRows(
+  result: AffiliateImageReplaceResult,
+): Array<Record<string, unknown>> {
+  return [
+    {
+      Collection: result.collection_id,
+      SKU: result.sku_id,
+      Status: result.ok ? "ok" : "failed",
+      OldURL: result.old_url,
+      New: result.new_url ?? result.asset_id ?? "",
+      Images: result.affiliate_images.length,
+      UpdatedAt: result.updated_at,
+    },
+  ];
+}
+
 function resolveSetReprice(
   payload: Record<string, unknown>,
   options: CollectionVariantsSetCommandOptions,
@@ -1408,6 +1670,19 @@ function normalizeVariantsCommandError(
     return notFoundError(notFoundResource);
   }
   return error;
+}
+
+function normalizeAffiliateImageReplaceCommandError(error: unknown): unknown {
+  if (isImageNotFoundError(error)) {
+    return affiliateImageNotFoundError();
+  }
+  if (isAmbiguousImageMatchError(error)) {
+    return ambiguousImageMatchError();
+  }
+  if (isDuplicateImageError(error)) {
+    return duplicateImageError();
+  }
+  return normalizeVariantsCommandError(error, "collection or sku");
 }
 
 function resolveId(
