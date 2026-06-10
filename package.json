@@ -1,6 +1,6 @@
 {
   "name": "zmyun-cli",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Agent-friendly CLI for ZMY collection and project workflows.",
   "type": "module",
   "homepage": "https://github.com/superjack2050/zmyun-cli#readme",
